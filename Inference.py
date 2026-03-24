@@ -8,14 +8,14 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from scripts.dataset import get_transforms, dsbTestDataset
-from segmentation_models_pytorch.unet import Unet
+from segmentation_models_pytorch import Unet
 from scripts.metric_mdice import Evaluator as mdice_evaluator
 from scripts.metric import Evaluator as iou_evaluator
 
 
 class config:
     seed = 42
-    name = 'fluorescence'
+    name = 'custom_r100_tile512'
     device = torch.device('cuda:0')
     save_result = True
     """ Path """
@@ -24,7 +24,7 @@ class config:
     df_path = f'./examples/labels/{name}/test.csv'
     model_path = f'./logs/{name}/best_model.pth'
     """ Testing """
-    input_size = 256
+    input_size = 512
     batch_size = 1
     num_workers = 8
 
@@ -57,7 +57,7 @@ if __name__ == '__main__':
     model = Unet(encoder_name='resnet50', encoder_weights='imagenet', decoder_use_batchnorm=True,
                  decoder_attention_type='scse', classes=2, activation=None)
 
-    checkpoint = torch.load(config.model_path, map_location=lambda storage, loc: storage)
+    checkpoint = torch.load(config.model_path, map_location=lambda storage, loc: storage, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     model.to(config.device)
     model.eval()

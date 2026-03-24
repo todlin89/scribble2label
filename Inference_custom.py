@@ -21,12 +21,6 @@ Baseline profile (single_gpu_profile, 56 frames): avg 1.894s per frame
      non_blocking=True lets the DMA proceed asynchronously so CPU can continue
      preparing the next batch. cudaStreamSynchronize dropped 97% (0.28s → 0.01s).
 
-3. tile_preprocess — kept albumentations (REVERTED, numpy was slower)
-   - ATTEMPTED: Replace albumentations Compose([Normalize(), ToTensorV2()])
-     with manual numpy ops to avoid Python overhead.
-   - RESULT: Slower (0.204s → 0.525s per frame). Albumentations uses optimized
-     C/OpenCV internals that outperform naive numpy. Reverted to original.
-
 After optimization (optimized_v2_profile, 69 frames): avg 1.262s per frame
 Overall speedup: 1.894s → 1.262s per frame (33% faster, 1.50x)
 Estimated full run: 4160 frames × 1.262s ≈ 87 min (was ~131 min, saves ~44 min)
@@ -201,7 +195,7 @@ def stitch_tiles(tiles_with_preds, padded_shape, original_shape, tile_size, over
     for pred, r, c in tiles_with_preds:
         prediction_sum[r:r + tile_size, c:c + tile_size] += pred
 
-    # Multiply by cached reciprocal instead of dividing
+    # Multiply by cached instead of dividing
     prediction_sum *= inv_count_map
 
     # Crop to original size and threshold
@@ -259,6 +253,7 @@ def _run_batch(model, tile_batch, device, profile=False):
     """Run a batch of tiles through the model."""
     if profile:
         nvtx.range_push("H2D_transfer")
+    # batch = torch.stack(tile_batch).to(device)
     batch = torch.stack(tile_batch).pin_memory().to(device, non_blocking=True)
     if profile:
         nvtx.range_pop()

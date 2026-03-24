@@ -10,9 +10,8 @@ from scripts.tb_utils import init_tb_logger
 from scripts.metric import Evaluator, AverageMeter
 from scripts.optimizer import RAdam
 
-from albumentations.core.composition import Compose
-from albumentations.augmentations.transforms import Normalize
-from albumentations.pytorch.transforms import ToTensorV2
+from albumentations import Compose, Normalize
+from albumentations.pytorch import ToTensorV2
 
 
 class Learner:
@@ -104,16 +103,20 @@ class Learner:
     def ensemble_prediction(self):
         ds = self.train_loader.dataset
         transforms = Compose([Normalize(), ToTensorV2()])
-        for idx, images in tqdm(ds.images.items(), total=len(ds)):
-            augmented = transforms(image=images['image'])
+        for idx in tqdm(range(len(ds)), total=len(ds)):
+            if ds.lazy:
+                image, _, _ = ds._load(idx)
+            else:
+                image = ds.images[idx]['image']
+            augmented = transforms(image=image)
             img = augmented['image'].unsqueeze(0).to(self.config.device)
             with torch.no_grad():
                 pred = torch.nn.functional.softmax(self.model(img), dim=1)
-            weight = torch.tensor(images['weight'])
+            weight = torch.tensor(ds.images[idx]['weight'])
             pred = pred.squeeze(0).cpu()
             x = pred[1]
             weight[...,0] = self.config.alpha * x + (1-self.config.alpha) * weight[...,0]
-            self.train_loader.dataset.images[idx]['weight'] = weight.numpy()
+            ds.images[idx]['weight'] = weight.numpy()
         self.n_ensemble += 1
 
     def fit(self, epochs):
@@ -157,7 +160,7 @@ class Learner:
             self.log(f'best model: {self.epoch} epoch - {score:.4f}')
 
     def load(self, path):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, weights_only=False)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])

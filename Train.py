@@ -4,26 +4,26 @@ import torch
 from torch.utils.data import DataLoader
 
 from scripts.dataset import get_transforms, dsbDataset
-from segmentation_models_pytorch.unet import Unet
+from segmentation_models_pytorch import Unet
 from scripts.utils import seed_everything
 from Learner import Learner
 
 
 class config:
     seed = 42
-    name = f'fluorescence'
+    name = f'fiji_BC_r50_tile512'
     device = torch.device('cuda:0')
     """ Path """
     data_dir = f'./examples/images/{name}/'
-    scr_dir = f'./examples/labels/{name}/scribble30/'
+    scr_dir = f'./examples/labels/{name}/scribble50/'
     mask_dir = f'./examples/labels/{name}/full/'
     df_path = f'./examples/labels/{name}/train.csv'
     log_dir = f'./logs/{name}'
     """ Training """
     fold = 0
     n_epochs = 10000
-    input_size = 256
-    batch_size = 30
+    input_size = 512
+    batch_size = 8
     lr = 3e-4
     weight_decay = 5e-5
     num_workers = 8
@@ -47,9 +47,9 @@ if __name__ == '__main__':
     transforms = get_transforms(config.input_size, need=('train', 'val'))
 
     train_dataset = dsbDataset(config.data_dir, config.scr_dir, config.mask_dir, train_df,
-                               tfms=transforms['train'], return_id=False)
+                               tfms=transforms['train'], return_id=False, lazy=True)
     valid_dataset = dsbDataset(config.data_dir, config.scr_dir, config.mask_dir, valid_df,
-                               tfms=transforms['val'], return_id=True)
+                               tfms=transforms['val'], return_id=True, lazy=True)
     train_loader = DataLoader(dataset=train_dataset, batch_size=config.batch_size, num_workers=config.num_workers,
                               shuffle=True)
     valid_loader = DataLoader(dataset=valid_dataset, batch_size=1, num_workers=config.num_workers,

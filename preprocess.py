@@ -13,6 +13,8 @@ from skimage.measure import label
 from skimage.morphology import skeletonize
 from skimage.feature import corner_harris, corner_peaks
 
+from tqdm import tqdm
+
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -76,7 +78,7 @@ def get_domimant_colors(img, top_colors=2):
 
 def get_images_details(image_ids):
     details = []
-    for image_id in image_ids:
+    for image_id in tqdm(image_ids, desc="Reading image details"):
         image_hsv, labels, num_masks = read_image_labels(image_id, space="hsv")
         height, width, l = image_hsv.shape
         dominant_colors_hsv, dominant_rates_hsv = get_domimant_colors(image_hsv, top_colors=1)
@@ -154,7 +156,8 @@ if __name__ == '__main__':
     for idx_type, image_type in enumerate(image_types):
         os.makedirs(f'./examples/images/{image_type}', exist_ok=True)
         os.makedirs(f'./examples/labels/{image_type}', exist_ok=True)
-        for image_name in trainPD[trainPD[HSV_CLUSTER] == idx_type][IMAGE_ID].values:
+        image_names = trainPD[trainPD[HSV_CLUSTER] == idx_type][IMAGE_ID].values
+        for image_name in tqdm(image_names, desc=f"Processing {image_type}"):
             os.makedirs(f'./examples/labels/{image_type}/full', exist_ok=True)
             shutil.copyfile(f'./examples/raw_data/{image_name}/images/{image_name}.png',
                             f'./examples/images/{image_type}/{image_name}.png')

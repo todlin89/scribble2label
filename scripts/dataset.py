@@ -34,30 +34,60 @@ def get_transforms(input_size=256, need=('train', 'val')):
 
 
 class dsbDataset(Dataset):
-    def __init__(self, data_folder, scr_folder, mask_folder, df, tfms, return_id=False):
-        self.images = defaultdict(dict)
-        for idx, (image_id, _) in df.iterrows():
-            img = np.array(Image.open(os.path.join(data_folder, f'{image_id}.png')).convert('RGB'))
-            scr = np.array(Image.open(os.path.join(scr_folder, f'{image_id}.png')))
-            mask = (np.array(Image.open(os.path.join(mask_folder, f'{image_id}.png')).convert('L')) > 0)
-            h, w = mask.shape
-            h = (h // 32) * 32
-            w = (w // 32) * 32
-            self.images[idx]['id'] = image_id
-            self.images[idx]['image'] = img[:h, :w, :]
-            self.images[idx]['mask'] = mask[:h, :w].astype('uint8')
-            self.images[idx]['scr'] = scr[:h, :w].astype('uint8')
-            self.images[idx]['weight'] = np.zeros((h, w, 1), dtype=np.float32)
+    def __init__(self, data_folder, scr_folder, mask_folder, df, tfms, return_id=False,
+                 lazy=False):
+        self.data_folder = data_folder
+        self.scr_folder = scr_folder
+        self.mask_folder = mask_folder
         self.tfms = tfms
         self.return_id = return_id
+        self.lazy = lazy
+        self.image_ids = [row.ImageID for _, row in df.iterrows()]
         self.length = len(df)
 
+        self.images = defaultdict(dict)
+        if lazy:
+            # Lazy loading: only store weights in memory, read images on-the-fly
+            for idx, image_id in enumerate(self.image_ids):
+                img = Image.open(os.path.join(data_folder, f'{image_id}.png'))
+                w_img, h_img = img.size
+                h = (h_img // 32) * 32
+                w = (w_img // 32) * 32
+                self.images[idx]['h'] = h
+                self.images[idx]['w'] = w
+                self.images[idx]['weight'] = np.zeros((h, w, 1), dtype=np.float32)
+        else:
+            # Eager loading: keep everything in memory (original behavior)
+            for idx, image_id in enumerate(self.image_ids):
+                img = np.array(Image.open(os.path.join(data_folder, f'{image_id}.png')).convert('RGB'))
+                scr = np.array(Image.open(os.path.join(scr_folder, f'{image_id}.png')))
+                mask = (np.array(Image.open(os.path.join(mask_folder, f'{image_id}.png')).convert('L')) > 0)
+                h, w = mask.shape
+                h = (h // 32) * 32
+                w = (w // 32) * 32
+                self.images[idx]['image'] = img[:h, :w, :]
+                self.images[idx]['mask'] = mask[:h, :w].astype('uint8')
+                self.images[idx]['scr'] = scr[:h, :w].astype('uint8')
+                self.images[idx]['weight'] = np.zeros((h, w, 1), dtype=np.float32)
+
+    def _load(self, idx):
+        image_id = self.image_ids[idx]
+        h, w = self.images[idx]['h'], self.images[idx]['w']
+        img = np.array(Image.open(os.path.join(self.data_folder, f'{image_id}.png')).convert('RGB'))[:h, :w, :]
+        scr = np.array(Image.open(os.path.join(self.scr_folder, f'{image_id}.png')))[:h, :w].astype('uint8')
+        mask = (np.array(Image.open(os.path.join(self.mask_folder, f'{image_id}.png')).convert('L')) > 0)[:h, :w].astype('uint8')
+        return img, scr, mask
+
     def __getitem__(self, idx):
-        image_id = self.images[idx]['id']
-        image = self.images[idx]['image']
-        scribble = self.images[idx]['scr']
+        image_id = self.image_ids[idx]
+
+        if self.lazy:
+            image, scribble, mask = self._load(idx)
+        else:
+            image = self.images[idx]['image']
+            scribble = self.images[idx]['scr']
+            mask = self.images[idx]['mask']
         weight = self.images[idx]['weight']
-        mask = self.images[idx]['mask']
 
         if self.tfms:
             augmented = self.tfms(image=image,
