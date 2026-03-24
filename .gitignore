@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Data & models
+examples/
+stage1_train/
+stage1_train.zip
+logs/
+
+# Profiling
+*.nsys-rep
+*.sqlite
+
+# Misc
+note.txt
