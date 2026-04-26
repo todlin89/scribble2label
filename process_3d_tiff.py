@@ -6,10 +6,10 @@ Samples every N slices, binarizes, generates scribble labels via skeletonization
 and saves in the expected directory structure.
 
 Usage:
-  python process_3d_tiff.py \
-      --tiff_path /data/datahere/Todd/data/xyvar_assemble_0_fiji_BC_adjust.tif \
+  python process_3d_tiff.py
+      --tiff_path /data/datahere/Todd/data/xyvar_assemble_0-1.tif \
       --output_dir ./examples \
-      --modality fiji_BC_r50 \
+      --modality xyvar_assemble_0_512_cubic \
       --step 10 \
       --ratio 0.5
 """
@@ -24,8 +24,27 @@ from PIL import Image
 from skimage.morphology import skeletonize
 from skimage.measure import label
 from skimage.feature import corner_harris, corner_peaks
+from scipy.ndimage import convolve
 from tqdm import tqdm
 import tifffile
+
+
+def trim_skeleton_endpoints(skeleton, n_pixels=5):
+    """Trim n_pixels from both ends of skeleton lines by iteratively
+    removing endpoints (pixels with only 1 neighbor in 8-connected nbhd)."""
+    if n_pixels <= 0:
+        return skeleton
+    sk = skeleton.copy().astype(np.uint8)
+    kernel = np.array([[1, 1, 1],
+                       [1, 0, 1],
+                       [1, 1, 1]], dtype=np.uint8)
+    for _ in range(n_pixels):
+        neighbors = convolve(sk, kernel, mode='constant', cval=0)
+        endpoints = (sk == 1) & (neighbors == 1)
+        if not endpoints.any():
+            break
+        sk[endpoints] = 0
+    return sk
 
 
 def remove_corner(mask, coords):
@@ -40,7 +59,7 @@ def remove_corner(mask, coords):
     return mask
 
 
-def scribblize(mask, ratio=1.0, max_dim=1024):
+def scribblize(mask, ratio=1.0, max_dim=1024, trim=0):
     original_height, original_width = mask.shape
     downscale_factor = 1.0
     if max(original_height, original_width) > max_dim:
@@ -54,13 +73,17 @@ def scribblize(mask, ratio=1.0, max_dim=1024):
         downscaled_mask = mask
 
     # Foreground skeleton
-    foreground_skeleton = skeletonize(downscaled_mask)
+    foreground_skeleton = skeletonize(downscaled_mask).astype(np.uint8)
+    if trim > 0:
+        foreground_skeleton = trim_skeleton_endpoints(foreground_skeleton, trim)
 
     # Background skeleton
     background_mask = 1 - downscaled_mask
-    background_skeleton = skeletonize(background_mask)
+    background_skeleton = skeletonize(background_mask).astype(np.uint8)
     corner_coords = corner_peaks(corner_harris(background_skeleton), min_distance=5)
     background_skeleton = remove_corner(background_skeleton, corner_coords)
+    if trim > 0:
+        background_skeleton = trim_skeleton_endpoints(background_skeleton, trim)
 
     # Control foreground skeleton ratio: randomly remove connected components
     foreground_components = label(foreground_skeleton)
@@ -101,6 +124,8 @@ def main():
     parser.add_argument('--modality', default='fiji_BC', help='Modality name')
     parser.add_argument('--step', type=int, default=10, help='Sample every N slices')
     parser.add_argument('--ratio', type=float, default=1.0, help='Scribble ratio')
+    parser.add_argument('--trim', type=int, default=0,
+                        help='Trim N pixels from both ends of each skeleton line (default: 0)')
     #parser.add_argument('--n_folds', type=int, default=5, help='Number of CV folds')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     args = parser.parse_args()
@@ -160,7 +185,7 @@ def main():
         Image.fromarray(mask_255).save(os.path.join(full_out, f'{image_id}.png'))
 
         # Generate scribble label
-        sk, i_sk = scribblize(mask, ratio=args.ratio)
+        sk, i_sk = scribblize(mask, ratio=args.ratio, trim=args.trim)
         scr = np.full_like(mask, 250, dtype=np.uint8)
         scr[i_sk == 1] = 0
         scr[sk == 1] = 1

@@ -12,6 +12,7 @@ from scripts.optimizer import RAdam
 
 from albumentations import Compose, Normalize
 from albumentations.pytorch import ToTensorV2
+from PIL import Image as PILImage
 
 
 class Learner:
@@ -103,6 +104,15 @@ class Learner:
     def ensemble_prediction(self):
         ds = self.train_loader.dataset
         transforms = Compose([Normalize(), ToTensorV2()])
+
+        # Output dir for this ensemble round
+        save_dir = os.path.join(self.config.log_dir, 'pseudo_labels',
+                                f'ensemble_{self.n_ensemble:03d}_epoch_{self.epoch:04d}')
+        os.makedirs(save_dir, exist_ok=True)
+
+        thr_hi = self.config.thr_conf
+        thr_lo = 1 - self.config.thr_conf
+
         for idx in tqdm(range(len(ds)), total=len(ds)):
             if ds.lazy:
                 image, _, _ = ds._load(idx)
@@ -117,6 +127,19 @@ class Learner:
             x = pred[1]
             weight[...,0] = self.config.alpha * x + (1-self.config.alpha) * weight[...,0]
             ds.images[idx]['weight'] = weight.numpy()
+
+            # Save binary pseudo label visualization
+            #   0   = high-confidence background
+            #   255 = high-confidence foreground
+            #   127 = unlabeled (still uncertain)
+            mean = weight[..., 0].numpy()
+            vis = np.full(mean.shape, 127, dtype=np.uint8)
+            vis[mean > thr_hi] = 255
+            vis[mean < thr_lo] = 0
+
+            image_id = ds.image_ids[idx]
+            PILImage.fromarray(vis).save(os.path.join(save_dir, f'{image_id}.png'))
+
         self.n_ensemble += 1
 
     def fit(self, epochs):

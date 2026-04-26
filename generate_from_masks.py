@@ -107,9 +107,9 @@ def scribblize(mask, ratio=0.3, max_dim=1024):
 
     return sk, i_sk
 
-"""
+
 def simple_kfold(n, n_splits=5, seed=42):
-    """Simple KFold split."""
+    
     n_splits = min(n_splits, n)
     if n_splits < 2:
         return [0] * n, 1
@@ -120,7 +120,7 @@ def simple_kfold(n, n_splits=5, seed=42):
     for i, idx in enumerate(indices):
         folds[idx] = i % n_splits
     return folds, n_splits
-"""
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -181,7 +181,7 @@ def main():
         arr = np.array(Image.open(src_path))
 
         # Binarize: 0/255 -> 0/1
-        mask = (arr > 220).astype('uint8')
+        mask = (arr > 0).astype('uint8')
 
         # Skip if mask is all background or all foreground
         fg_ratio = mask.sum() / mask.size
