@@ -88,9 +88,9 @@ def get_config(mode, model_name='basicunet'):
     elif mode == '3d':
         config.name = f'thres_90_3d_{model_name}'
         config.device = torch.device('cuda:0')
-        config.image_path = '/data/datahere/Todd/data/ImagesTr-1/imagesTr.tif'
-        config.scr_path = '/data/datahere/Todd/data/ImagesTr-1/scribble100.tif'
-        config.mask_path = '/data/datahere/Todd/data/ImagesTr-1/full.tif'
+        config.image_path = '/data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic/image/xy_assemble_0_512_cubic.tif'
+        config.scr_path = '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/scribble100.tif'
+        config.mask_path = '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/full.tif'
         config.log_dir = f'./logs/{config.name}'
         config.patch_size = (256, 256, 256)
         config.batch_size = 2

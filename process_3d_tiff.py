@@ -7,7 +7,7 @@ and saves in the expected directory structure.
 
 Usage:
   python process_3d_tiff.py
-      --tiff_path /data/datahere/Todd/data/xyvar_assemble_0-1.tif \
+      --tiff_path /data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic_big_neuron/xystd_assemble_0_mask.tif \
       --output_dir ./examples \
       --modality xyvar_assemble_0_512_cubic \
       --step 10 \
