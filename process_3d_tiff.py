@@ -126,6 +126,10 @@ def main():
     parser.add_argument('--ratio', type=float, default=1.0, help='Scribble ratio')
     parser.add_argument('--trim', type=int, default=0,
                         help='Trim N pixels from both ends of each skeleton line (default: 0)')
+    parser.add_argument('--save_tiff', action='store_true',
+                        help='Also save aligned 3D TIFFs (images.tif, {scribble}.tif, full.tif) '
+                             'for Train_3d.py. Processes ALL D slices regardless of --step; '
+                             'empty/full slices get scribble=250 (ignore) so D stays aligned.')
     #parser.add_argument('--n_folds', type=int, default=5, help='Number of CV folds')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     args = parser.parse_args()
@@ -150,48 +154,92 @@ def main():
 
     # Sample slices
     slice_indices = list(range(0, n_slices, args.step))
+    sampled_set = set(slice_indices)
     print(f"Sampling every {args.step} slices: {len(slice_indices)} slices from {n_slices}")
+
+    # Optional aligned 3D TIFF accumulators (always full D, regardless of --step)
+    img_stack_3d = scr_stack_3d = full_stack_3d = None
+    if args.save_tiff:
+        first = stack[0]
+        H, W = first.shape[:2]
+        img_stack_3d = np.zeros((n_slices, H, W), dtype=stack.dtype)
+        scr_stack_3d = np.full((n_slices, H, W), 250, dtype=np.uint8)
+        full_stack_3d = np.zeros((n_slices, H, W), dtype=np.uint8)
+        iter_indices = range(n_slices)
+        print(f"--save_tiff: processing ALL {n_slices} slices for 3D TIFF output")
+    else:
+        iter_indices = slice_indices
 
     image_ids = []
     skipped = 0
 
-    for si in tqdm(slice_indices, desc="Processing slices"):
-        arr = stack[si]
+    for si in tqdm(iter_indices, desc="Processing slices"):
         image_id = f'slice_{si:04d}'
+        is_sampled = si in sampled_set
 
-        # Skip if already processed
-        if os.path.exists(os.path.join(img_out, f'{image_id}.png')):
+        # Fast path: PNG already exists and we don't need TIFF for this slice
+        if not args.save_tiff and os.path.exists(os.path.join(img_out, f'{image_id}.png')):
             image_ids.append(image_id)
             continue
 
-        # Binarize
-        mask = (arr > 220).astype('uint8')
+        arr = stack[si]
 
-        # Skip empty or fully filled slices
-        fg_ratio = mask.sum() / mask.size
-        if fg_ratio == 0 or fg_ratio == 1:
-            skipped += 1
-            continue
-
-        # Save RGB image (grayscale -> 3ch)
+        # Grayscale (for binarization + TIFF) and RGB (for PNG image)
         if arr.ndim == 2:
+            gray = arr
             rgb = np.stack([arr, arr, arr], axis=-1)
         else:
-            rgb = arr[:, :, :3]
-        Image.fromarray(rgb).save(os.path.join(img_out, f'{image_id}.png'))
+            gray = arr[..., 0]
+            rgb = arr[..., :3]
 
-        # Save full mask (0/255 for validation)
+        # Binarize
+        mask = (gray > 220).astype('uint8')
+        fg_ratio = mask.sum() / mask.size
+        is_degenerate = (fg_ratio == 0 or fg_ratio == 1)
+
+        # Scribble: skip skeletonization for degenerate slices, leave as 250 (ignore)
+        if is_degenerate:
+            scr = np.full_like(mask, 250, dtype=np.uint8)
+        else:
+            sk, i_sk = scribblize(mask, ratio=args.ratio, trim=args.trim)
+            scr = np.full_like(mask, 250, dtype=np.uint8)
+            scr[i_sk == 1] = 0
+            scr[sk == 1] = 1
+
         mask_255 = (mask * 255).astype('uint8')
-        Image.fromarray(mask_255).save(os.path.join(full_out, f'{image_id}.png'))
 
-        # Generate scribble label
-        sk, i_sk = scribblize(mask, ratio=args.ratio, trim=args.trim)
-        scr = np.full_like(mask, 250, dtype=np.uint8)
-        scr[i_sk == 1] = 0
-        scr[sk == 1] = 1
-        Image.fromarray(scr).save(os.path.join(scr_out, f'{image_id}.png'))
+        # Write into aligned 3D stacks (every slice index)
+        if args.save_tiff:
+            img_stack_3d[si] = gray
+            scr_stack_3d[si] = scr
+            full_stack_3d[si] = mask_255
 
-        image_ids.append(image_id)
+        # PNG output: only for sampled, non-degenerate slices (original behavior)
+        if is_sampled:
+            if is_degenerate:
+                skipped += 1
+            else:
+                png_path = os.path.join(img_out, f'{image_id}.png')
+                if not os.path.exists(png_path):
+                    Image.fromarray(rgb).save(png_path)
+                    Image.fromarray(mask_255).save(os.path.join(full_out, f'{image_id}.png'))
+                    Image.fromarray(scr).save(os.path.join(scr_out, f'{image_id}.png'))
+                image_ids.append(image_id)
+
+    # Save aligned 3D TIFFs for Train_3d.py
+    if args.save_tiff:
+        tif_dir = os.path.join(args.output_dir, 'tif', args.modality)
+        os.makedirs(tif_dir, exist_ok=True)
+        img_tif = os.path.join(tif_dir, 'images.tif')
+        scr_tif = os.path.join(tif_dir, f'{scr_name}.tif')
+        full_tif = os.path.join(tif_dir, 'full.tif')
+        tifffile.imwrite(img_tif, img_stack_3d)
+        tifffile.imwrite(scr_tif, scr_stack_3d)
+        tifffile.imwrite(full_tif, full_stack_3d)
+        print(f"\n3D TIFFs ({img_stack_3d.shape}, dtype img={img_stack_3d.dtype}):")
+        print(f"  images:   {img_tif}")
+        print(f"  scribble: {scr_tif}   (values in {{0, 1, 250}})")
+        print(f"  full:     {full_tif}  (values in {{0, 255}})")
 
     if not image_ids:
         print("No valid slices found.")
@@ -230,6 +278,8 @@ def main():
     print(f"\nNext steps:")
     print(f"  1. Tile: python tile_dataset.py --input_dir {args.output_dir} --modality {args.modality} --tile_size 512 --overlap 64 --scribble_name {scr_name}")
     print(f"  2. Update Train.py config name to '{args.modality}_tile512'")
+    if args.save_tiff:
+        print(f"  3. 3D training: point Train_3d.py image_path/scr_path/mask_path at the 3D TIFFs above")
 
 
 if __name__ == '__main__':
