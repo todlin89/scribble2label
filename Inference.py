@@ -36,10 +36,10 @@ def get_config(mode, model_name='basicunet'):
     elif mode == '3d':
         config.name = f'thres_90_3d_{model_name}'
         config.device = torch.device('cuda:1')
-        config.input_path = '/data/datahere/Todd/data/xy_assemble_0/xy_assemble_0.tif'
+        config.input_path = '/data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic/image/test_cubic.tif'
         config.mask_path = '/data/datahere/Todd/data/ImagesTr-1/full.tif'
         config.model_path = f'./logs/{config.name}/best_model.pth'
-        config.out_dir = f'./logs/{config.name}/inference'
+        config.out_dir = f'./logs/{config.name}/inference_512'
         config.use_amp = True
         config.sw_roi = (256, 256, 256)
         config.sw_overlap = 0.5

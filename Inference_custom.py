@@ -64,8 +64,13 @@ def get_args():
                         help='Use all available GPUs for inference')
     parser.add_argument('--gpu_ids', type=str, default=None,
                         help='Comma-separated GPU IDs to use (default: all available, e.g. 0,1,2,3)')
+    parser.add_argument('--amp', action='store_true', default=False,
+                        help='Use mixed-precision inference to reduce GPU memory')
     parser.add_argument('--profile', action='store_true', default=False,
                         help='Enable NVTX profiling markers for Nsight Systems')
+    parser.add_argument('--downscale_factor', type=float, default=1.0,
+                        help='Experimental: resize each frame before inference, then resize prediction '
+                             'back to original size (e.g. 0.5 halves each side; default: 1.0)')
     return parser.parse_args()
 
 
@@ -80,6 +85,15 @@ def load_model(model_path, device):
     model.eval()
     print(f'Model loaded: {model_path}')
     return model
+
+
+def parse_gpu_ids(gpu_ids_arg):
+    if not gpu_ids_arg:
+        return None
+    gpu_ids = [int(x.strip()) for x in gpu_ids_arg.split(',') if x.strip()]
+    if not gpu_ids:
+        raise ValueError('No valid GPU ids were provided.')
+    return gpu_ids
 
 
 def normalize_to_uint8(arr):
@@ -202,6 +216,26 @@ def stitch_tiles(tiles_with_preds, padded_shape, original_shape, tile_size, over
     return (prediction_sum[:orig_h, :orig_w] > 0.5).astype(np.uint8)
 
 
+def resize_image_for_inference(image, scale_factor):
+    """Resize RGB uint8 image for experimental low-resolution inference."""
+    if scale_factor == 1.0:
+        return image
+
+    h, w = image.shape[:2]
+    new_w = max(1, int(round(w * scale_factor)))
+    new_h = max(1, int(round(h * scale_factor)))
+    resized = Image.fromarray(image).resize((new_w, new_h), Image.BILINEAR)
+    return np.array(resized)
+
+
+def resize_mask_to_original(mask, original_shape):
+    """Resize binary mask back to original size without introducing new labels."""
+    orig_h, orig_w = original_shape
+    resized = Image.fromarray((mask > 0).astype(np.uint8) * 255).resize(
+        (orig_w, orig_h), Image.NEAREST)
+    return (np.array(resized) > 0).astype(np.uint8)
+
+
 from albumentations import Compose, Normalize
 from albumentations.pytorch import ToTensorV2
 
@@ -258,7 +292,8 @@ def _run_batch(model, tile_batch, device, profile=False):
     if profile:
         nvtx.range_pop()
 
-    with torch.no_grad():
+    use_amp = device.type == 'cuda' and getattr(model, '_use_amp', False)
+    with torch.inference_mode(), torch.cuda.amp.autocast(enabled=use_amp):
         if profile:
             nvtx.range_push("forward_pass")
         outputs = model(batch)
@@ -276,6 +311,9 @@ def _run_batch(model, tile_batch, device, profile=False):
     result = probs[:, 1].cpu().numpy()
     if profile:
         nvtx.range_pop()
+    del batch, outputs, probs
+    if device.type == 'cuda':
+        torch.cuda.empty_cache()
     # Return foreground probability (class 1)
     return result
 
@@ -283,6 +321,14 @@ def _run_batch(model, tile_batch, device, profile=False):
 def process_single_frame(image, model, device, args):
     """Run tiling inference on a single frame and return the stitched result."""
     profile = getattr(args, 'profile', False)
+    original_shape = image.shape[:2]
+
+    if args.downscale_factor != 1.0:
+        if profile:
+            nvtx.range_push("downscale_image")
+        image = resize_image_for_inference(image, args.downscale_factor)
+        if profile:
+            nvtx.range_pop()
 
     if profile:
         nvtx.range_push("extract_tiles")
@@ -306,6 +352,13 @@ def process_single_frame(image, model, device, args):
     if profile:
         nvtx.range_pop()
 
+    if args.downscale_factor != 1.0:
+        if profile:
+            nvtx.range_push("upscale_prediction")
+        result = resize_mask_to_original(result, original_shape)
+        if profile:
+            nvtx.range_pop()
+
     return result
 
 
@@ -313,6 +366,7 @@ def gpu_worker(gpu_id, frame_indices, stack, output_dir, args, result_dict):
     """Worker function: each GPU processes its assigned frames."""
     device = torch.device(f'cuda:{gpu_id}')
     model = load_model(args.model_path, device)
+    model._use_amp = args.amp
 
     torch.cuda.reset_peak_memory_stats(device)
     torch.cuda.synchronize(device)
@@ -361,6 +415,11 @@ def gpu_worker(gpu_id, frame_indices, stack, output_dir, args, result_dict):
 
 def main():
     args = get_args()
+    if args.downscale_factor <= 0:
+        raise ValueError('--downscale_factor must be > 0.')
+    requested_gpu_ids = parse_gpu_ids(args.gpu_ids)
+    if requested_gpu_ids is not None:
+        args.multi_gpu = True
 
     # Setup output directory
     if args.output_dir is None:
@@ -374,6 +433,8 @@ def main():
         image_paths.extend(glob(os.path.join(args.input_dir, ext)))
     image_paths = sorted(image_paths)
     print(f'Found {len(image_paths)} image file(s) in {args.input_dir}')
+    if args.downscale_factor != 1.0:
+        print(f'Experimental mode: downscale_factor={args.downscale_factor}')
 
     if len(image_paths) == 0:
         print('No images found. Check your input directory.')
@@ -381,8 +442,8 @@ def main():
 
     # Determine GPU list
     if args.multi_gpu:
-        if args.gpu_ids:
-            gpu_ids = [int(x) for x in args.gpu_ids.split(',')]
+        if requested_gpu_ids:
+            gpu_ids = requested_gpu_ids
         else:
             gpu_ids = list(range(torch.cuda.device_count()))
         print(f'Multi-GPU mode: using GPUs {gpu_ids}')
@@ -411,8 +472,13 @@ def main():
 
         if n_frames == 1:
             # Single frame - always single GPU
-            device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+            if requested_gpu_ids:
+                device_str = f'cuda:{requested_gpu_ids[0]}'
+            else:
+                device_str = args.device
+            device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
             model = load_model(args.model_path, device)
+            model._use_amp = args.amp
 
             print(f'Processing: {os.path.basename(img_path)} (single frame)')
             _, image = next(load_frames(img_path))
@@ -486,8 +552,13 @@ def main():
 
         else:
             # Multi-frame + Single GPU
-            device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
+            if requested_gpu_ids:
+                device_str = f'cuda:{requested_gpu_ids[0]}'
+            else:
+                device_str = args.device
+            device = torch.device(device_str if torch.cuda.is_available() else 'cpu')
             model = load_model(args.model_path, device)
+            model._use_amp = args.amp
 
             print(f'Processing: {os.path.basename(img_path)} ({n_frames} frames)')
             frame_dir = os.path.join(args.output_dir, basename)
