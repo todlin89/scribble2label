@@ -1,0 +1,6 @@
+name: scribble2label_new
+channels:
+  - defaults
+dependencies:
+  - python=3.9
+prefix: /home/todlin89/miniconda3/envs/scribble2label_new
