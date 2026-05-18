@@ -14,10 +14,13 @@ class config:
     name = 'thres_90_3d'
     device = torch.device('cuda:0')
 
-    """ Data paths (single 3D TIFF volumes, all shape (D, H, W)) """
-    image_path = '/data/datahere/Todd/data/ImagesTr-1/imagesTr.tif'
-    scr_path = '/data/datahere/Todd/data/ImagesTr-1/scribble100.tif'
-    mask_path = '/data/datahere/Todd/data/ImagesTr-1/full.tif'
+    """ Data paths (parallel lists of 3D TIFF volumes, each shape (D, H, W)).
+    Set val_index = k to hold out volume k for validation (requires N>=2);
+    leave val_index = None for the legacy single-volume sanity check. """
+    image_paths = ['/data/datahere/Todd/data/ImagesTr-1/imagesTr.tif']
+    scr_paths = ['/data/datahere/Todd/data/ImagesTr-1/scribble100.tif']
+    mask_paths = ['/data/datahere/Todd/data/ImagesTr-1/full.tif']
+    val_index = None
     log_dir = f'./logs/{name}'
 
     """ Training """
@@ -58,25 +61,22 @@ if __name__ == '__main__':
     )
 
     train_dataset = dsb3DDataset(
-        image_path=config.image_path,
-        scr_path=config.scr_path,
-        mask_path=config.mask_path,
+        image_paths=config.image_paths,
+        scr_paths=config.scr_paths,
+        mask_paths=config.mask_paths,
+        val_index=config.val_index,
         patch_size=config.patch_size,
         samples_per_epoch=config.samples_per_epoch,
         mode='train',
     )
     valid_dataset = dsb3DDataset(
-        image_path=config.image_path,
-        scr_path=config.scr_path,
-        mask_path=config.mask_path,
+        image_paths=config.image_paths,
+        scr_paths=config.scr_paths,
+        mask_paths=config.mask_paths,
+        val_index=config.val_index,
         patch_size=config.patch_size,
-        samples_per_epoch=1,
         mode='val',
     )
-    # Share the weight volume between train and val datasets so that
-    # ensemble_prediction updates are visible if the val dataset is ever used
-    # for pseudo-label lookup.
-    valid_dataset.weight = train_dataset.weight
 
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
                               num_workers=config.num_workers, shuffle=True)

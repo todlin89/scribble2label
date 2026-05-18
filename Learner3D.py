@@ -126,37 +126,46 @@ class Learner3D:
 
     def ensemble_prediction(self):
         ds = self.train_loader.dataset
-        volume = torch.from_numpy(ds.image.astype(np.float32) / 255.0).unsqueeze(0).unsqueeze(0)
-        volume = volume.to(self.config.device)
-
         save_dir = os.path.join(self.config.log_dir, 'pseudo_labels',
                                 f'ensemble_{self.n_ensemble:03d}_epoch_{self.epoch:04d}')
         os.makedirs(save_dir, exist_ok=True)
 
-        with torch.no_grad(), self._autocast():
-            logits = sliding_window_inference(
-                inputs=volume,
-                roi_size=self.config.sw_roi,
-                sw_batch_size=self.config.sw_batch_size,
-                predictor=self.model,
-                overlap=self.config.sw_overlap,
-                mode='gaussian',
+        thr_hi = self.config.thr_conf
+        thr_lo = 1 - self.config.thr_conf
+
+        for vi in range(len(ds.images)):
+            volume = torch.from_numpy(ds.images[vi].astype(np.float32) / 255.0)
+            volume = volume.unsqueeze(0).unsqueeze(0).to(self.config.device)
+
+            with torch.no_grad(), self._autocast():
+                logits = sliding_window_inference(
+                    inputs=volume,
+                    roi_size=self.config.sw_roi,
+                    sw_batch_size=self.config.sw_batch_size,
+                    predictor=self.model,
+                    overlap=self.config.sw_overlap,
+                    mode='gaussian',
+                )
+                prob = F.softmax(logits, dim=1)[0, 1].to(torch.float32).cpu().numpy()
+
+            ds.weights[vi][...] = (
+                self.config.alpha * prob
+                + (1 - self.config.alpha) * ds.weights[vi]
             )
-            prob = F.softmax(logits, dim=1)[0, 1].to(torch.float32).cpu().numpy()
 
-        ds.weight[...] = self.config.alpha * prob + (1 - self.config.alpha) * ds.weight
+            try:
+                import tifffile
 
-        try:
-            import tifffile
-
-            thr_hi = self.config.thr_conf
-            thr_lo = 1 - self.config.thr_conf
-            vis = np.full(ds.weight.shape, 127, dtype=np.uint8)
-            vis[ds.weight > thr_hi] = 255
-            vis[ds.weight < thr_lo] = 0
-            tifffile.imwrite(os.path.join(save_dir, 'volume_0.tif'), vis)
-        except Exception as exc:
-            self.log(f'Pseudo-label export skipped: {exc}')
+                vis = np.full(ds.weights[vi].shape, 127, dtype=np.uint8)
+                vis[ds.weights[vi] > thr_hi] = 255
+                vis[ds.weights[vi] < thr_lo] = 0
+                tifffile.imwrite(
+                    os.path.join(save_dir, f'{ds.image_ids[vi]}.tif'), vis
+                )
+            except Exception as exc:
+                self.log(
+                    f'Pseudo-label export skipped for {ds.image_ids[vi]}: {exc}'
+                )
 
         self.n_ensemble += 1
 

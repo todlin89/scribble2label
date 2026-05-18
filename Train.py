@@ -88,9 +88,20 @@ def get_config(mode, model_name='basicunet'):
     elif mode == '3d':
         config.name = f'thres_90_3d_{model_name}'
         config.device = torch.device('cuda:0')
-        config.image_path = '/data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic/image/xy_assemble_0_512_cubic.tif'
-        config.scr_path = '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/scribble100.tif'
-        config.mask_path = '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/full.tif'
+        # Parallel lists of 3D TIFF volumes (each shape (D, H, W)). To do
+        # leave-one-volume-out validation, set --val_index k; volume k is
+        # held out and the rest train. Leave --val_index unset (None) for a
+        # legacy single-volume sanity check (train and val see all volumes).
+        config.image_paths = [
+            '/data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic/image/xy_assemble_0_512_cubic.tif',
+        ]
+        config.scr_paths = [
+            '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/scribble100.tif',
+        ]
+        config.mask_paths = [
+            '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/full.tif',
+        ]
+        config.val_index = None
         config.log_dir = f'./logs/{config.name}'
         config.patch_size = (256, 256, 256)
         config.batch_size = 2
@@ -115,9 +126,16 @@ if __name__ == '__main__':
     parser.add_argument('--model', type=str, default='basicunet',
                         choices=list(MODELS_3D.keys()),
                         help=f'3D model architecture (ignored for 2d):\n{model_help}')
+    parser.add_argument('--val_index', type=int, default=None,
+                        help='3D only: 0-based index of the volume to hold out '
+                             'for validation. Omit for legacy single-volume '
+                             'behaviour (train and val both see all volumes; '
+                             'leaky, sanity-check only).')
     args = parser.parse_args()
 
     config = get_config(args.mode, args.model)
+    if args.mode == '3d':
+        config.val_index = args.val_index
     seed_everything(config.seed)
     os.makedirs(config.log_dir, exist_ok=True)
 
@@ -163,22 +181,22 @@ if __name__ == '__main__':
         print(f"Model: {config.model_name} ({n_params/1e6:.2f}M params)")
 
         train_dataset = dsb3DDataset(
-            image_path=config.image_path,
-            scr_path=config.scr_path,
-            mask_path=config.mask_path,
+            image_paths=config.image_paths,
+            scr_paths=config.scr_paths,
+            mask_paths=config.mask_paths,
+            val_index=config.val_index,
             patch_size=config.patch_size,
             samples_per_epoch=config.samples_per_epoch,
             mode='train',
         )
         valid_dataset = dsb3DDataset(
-            image_path=config.image_path,
-            scr_path=config.scr_path,
-            mask_path=config.mask_path,
+            image_paths=config.image_paths,
+            scr_paths=config.scr_paths,
+            mask_paths=config.mask_paths,
+            val_index=config.val_index,
             patch_size=config.patch_size,
-            samples_per_epoch=1,
             mode='val',
         )
-        valid_dataset.weight = train_dataset.weight
 
         train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
                                   num_workers=config.num_workers, shuffle=True)
