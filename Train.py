@@ -92,14 +92,22 @@ def get_config(mode, model_name='basicunet'):
         # leave-one-volume-out validation, set --val_index k; volume k is
         # held out and the rest train. Leave --val_index unset (None) for a
         # legacy single-volume sanity check (train and val see all volumes).
+        #
+        # Replace the placeholder paths below with absolute paths to your
+        # own data. image_paths[i], scr_paths[i] and mask_paths[i] must all
+        # refer to the same volume i. Uncomment / append entries to train
+        # on additional volumes.
         config.image_paths = [
-            '/data/datahere/Todd/data/xy_assemble_0/xystd_assemble_0_512_cubic/image/xy_assemble_0_512_cubic.tif',
+            '/path/to/volume_0_image.tif',
+            # '/path/to/volume_1_image.tif',
         ]
         config.scr_paths = [
-            '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/scribble100.tif',
+            '/path/to/volume_0_scribble.tif',
+            # '/path/to/volume_1_scribble.tif',
         ]
         config.mask_paths = [
-            '/data/datahere/Todd/Projects/scribble2label/examples/labels/xystd_assemble_0_512_cubic/full.tif',
+            '/path/to/volume_0_full_mask.tif',
+            # '/path/to/volume_1_full_mask.tif',
         ]
         config.val_index = None
         config.log_dir = f'./logs/{config.name}'
